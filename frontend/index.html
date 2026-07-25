@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ULTIMATE DUB STUDIO</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
+</head>
+<body>
+
+    <header class="app-header">
+        <h1>ULTIMATE DUB STUDIO</h1>
+        <div class="header-actions">
+            <button type="button" class="btn btn-green" onclick="startNewProjectUI()">New Project</button>
+            <button type="button" class="btn btn-blue" onclick="saveActiveProject()">Save Project</button>
+            <button type="button" class="btn btn-outline" onclick="loadHistoryPanel()">View Projects</button>
+        </div>
+    </header>
+
+    <main class="container">
+
+        <!-- Section 1 -->
+        <section class="card">
+            <h2>1. Upload and Initialize</h2>
+            <form id="upload-form">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="project-name">Project name & number:</label>
+                        <input type="text" id="project-name" placeholder="Project #12" required autocomplete="off">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="target-language">Target language:</label>
+                        <select id="target-language">
+                            <option value="Hindi" selected>Hindi (Hinglish)</option>
+                            <option value="English">English</option>
+                            <option value="Nepali">Nepali</option>
+                            <option value="Spanish">Spanish</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label for="media-file">Source audio/video (mp3, wav, m4a, mp4):</label>
+                        <input type="file" id="media-file" accept="audio/*,video/*">
+                    </div>
+                </div>
+
+                <div class="stepper-box">
+                    <label>PIPELINE PROGRESS STATUS:</label>
+                    <div class="stepper-bar">
+                        <div id="step-slice" class="step-badge pending"><span class="num">1</span> Slicing</div>
+                        <span class="step-arrow">➔</span>
+                        <div id="step-transcribe" class="step-badge pending"><span class="num">2</span> Transcribing</div>
+                        <span class="step-arrow">➔</span>
+                        <div id="step-translate" class="step-badge pending"><span class="num">3</span> Translating</div>
+                        <span class="step-arrow">➔</span>
+                        <div id="step-dub" class="step-badge pending"><span class="num">4</span> Voice TTS</div>
+                        <span class="step-arrow">➔</span>
+                        <div id="step-audit" class="step-badge pending"><span class="num">5</span> Auditing</div>
+                    </div>
+                </div>
+
+                <div class="action-bar">
+                    <button type="submit" id="btn-submit" class="btn btn-green">Start Process</button>
+                    <button type="button" id="btn-stop" class="btn btn-red" onclick="stopProcess()">Stop Process</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Section 2 -->
+        <section class="card">
+            <h2>2. Engine Logs & Status Monitor</h2>
+            <div id="log-output" class="log-box">
+                System initialized. Ready for job launch...
+            </div>
+        </section>
+
+        <!-- Section 3 -->
+        <section class="card">
+            <h2>3. Access Files and Edit (Chunks)</h2>
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="text-type-select">a. Choose transcribed or translated text:</label>
+                    <select id="text-type-select" onchange="onTextTypeChange()">
+                        <option value="">-- Select Category --</option>
+                        <option value="nepali">Nepali Transcript</option>
+                        <option value="hindi">Hindi Translation</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="chunk-file-select">b. Fetch chunk ID according to step (a) choice:</label>
+                    <select id="chunk-file-select" disabled onchange="onChunkFileSelect()">
+                        <option value="">-- Select Option (a) First --</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group full-width" style="margin-top: 15px;">
+                <label for="chunk-text-editor">Text Content Editor:</label>
+                <textarea id="chunk-text-editor" rows="4" disabled placeholder="Select category and chunk file above to edit content..."></textarea>
+            </div>
+
+            <div class="action-bar">
+                <button type="button" class="btn btn-green" onclick="saveChunkText()">Save Edit File</button>
+                <button type="button" class="btn btn-blue" onclick="reRunTranslator()">Re-run Translator</button>
+                <button type="button" class="btn btn-blue" onclick="reRunDubber()">Re-run Dubber</button>
+            </div>
+        </section>
+
+        <!-- Section 4 -->
+        <section class="card">
+            <h2>4. Access Audio Chunks (Slice, Dubbed)</h2>
+
+            <div class="waveform-grid">
+                <div class="waveform-box">
+                    <div class="form-group">
+                        <label for="sliced-chunk-select">Choose sliced chunk (Original audio):</label>
+                        <select id="sliced-chunk-select" onchange="loadSlicedChunkAudio()">
+                            <option value="">-- Select Sliced Chunk --</option>
+                        </select>
+                    </div>
+                    <div class="audio-card">
+                        <div class="audio-card-header">
+                            <span id="label-sliced-chunk">No Chunk Loaded</span>
+                            <span id="time-sliced-chunk" class="time-code">00:00.00 / 00:00.00</span>
+                        </div>
+                        <div id="waveform-chunk-orig"></div>
+                        <button type="button" class="btn btn-green btn-full" style="margin-top: 10px;" onclick="playPauseChunkOrig()">Play / Pause</button>
+                    </div>
+                </div>
+
+                <div class="waveform-box">
+                    <div class="form-group">
+                        <label for="dubbed-chunk-select">Choose dubbed chunk (Dubbed audio):</label>
+                        <select id="dubbed-chunk-select" onchange="loadDubbedChunkAudio()">
+                            <option value="">-- Select Dubbed Chunk --</option>
+                        </select>
+                    </div>
+                    <div class="audio-card">
+                        <div class="audio-card-header">
+                            <span id="label-dubbed-chunk">No Chunk Loaded</span>
+                            <span id="time-dubbed-chunk" class="time-code">00:00.00 / 00:00.00</span>
+                        </div>
+                        <div id="waveform-chunk-dub"></div>
+                        <button type="button" class="btn btn-green btn-full" style="margin-top: 10px;" onclick="playPauseChunkDub()">Play / Pause</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 5 -->
+        <section class="card">
+            <h2>5. Final Master Audio Stitching & Multi-Track Studio</h2>
+
+            <div class="action-bar" style="justify-content: flex-start; margin-bottom: 20px;">
+                <button type="button" id="btn-final-stitch" class="btn btn-green" onclick="proceedToFinalStitch()">Proceed to Stage 5 to Stitch</button>
+                <button type="button" class="btn btn-blue" onclick="openStudioPage()">Open Sync Studio Page</button>
+            </div>
+
+            <div class="waveform-grid">
+                <div class="audio-card">
+                    <div class="audio-card-header">
+                        <span>Original Master Audio</span>
+                        <span id="time-final-orig" class="time-code">00:00.00 / 00:00.00</span>
+                    </div>
+                    <div id="waveform-final-orig"></div>
+                    <button type="button" class="btn btn-green btn-full" style="margin-top: 10px;" onclick="playPauseFinalOrig()">Play / Pause</button>
+                </div>
+
+                <div class="audio-card">
+                    <div class="audio-card-header">
+                        <span>FINAL DUBBED Master Audio</span>
+                        <span id="time-final-dub" class="time-code">00:00.00 / 00:00.00</span>
+                    </div>
+                    <div id="waveform-final-dub"></div>
+                    <button type="button" class="btn btn-green btn-full" style="margin-top: 10px;" onclick="playPauseFinalDub()">Play / Pause</button>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Past Saved Projects Gallery Modal -->
+    <div id="history-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Past Saved Projects Gallery</h3>
+                <button type="button" class="close-btn" onclick="closeHistoryPanel()">&times;</button>
+            </div>
+            <div id="history-list" class="project-grid"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

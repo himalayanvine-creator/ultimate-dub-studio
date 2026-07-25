@@ -1,0 +1,35 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python caching
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Project Assets & Storage
+projects/
+*.wav
+*.mp3
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+
+# SQLite Database
+localdub_history.db
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node/Frontend dependencies (if any in the future)
+node_modules/
+
+# Local configuration / secrets
+.env
+.env.*
