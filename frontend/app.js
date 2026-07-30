@@ -136,7 +136,9 @@ function updateStepProgress(activeStepKey) {
     const steps = [
         { id: "step-slice", key: "slice" },
         { id: "step-transcribe", key: "transcribe" },
-        { id: "step-translate", key: "translate" }
+        { id: "step-translate", key: "translate" },
+        { id: "step-dub", key: "dub" },
+        { id: "step-audit", key: "audit" }
     ];
 
     let foundActive = false;
@@ -585,21 +587,20 @@ function runDubbingPipeline() {
     }
     
     appendLog(`🎙️ Launching Dubbing & Quality Audit Pipeline (Dubber ➔ Auditor)...`);
-    updateStepStatus("dub", "running");
+    updateStepProgress("dub");
 
     const eventSource = new EventSource(`${API_BASE}/api/projects/${encodeURIComponent(AppState.activeProjectId)}/run-dubbing-pipeline`);
 
     eventSource.onmessage = function(e) {
         appendLog(e.data);
 
-        if (e.data.includes("dubber.py")) updateStepStatus("dub", "running");
+        if (e.data.includes("dubber.py")) updateStepProgress("dub");
         if (e.data.includes("auditor.py")) {
-            updateStepStatus("dub", "completed");
-            updateStepStatus("audit", "running");
+            updateStepProgress("audit");
         }
 
         if (e.data.includes("[COMPLETE]")) {
-            updateStepStatus("audit", "completed");
+            updateStepProgress("completed_all");
             eventSource.close();
             loadProjectData();
             appendLog("✅ Dubbing & Quality Audit Pipeline finished successfully!");

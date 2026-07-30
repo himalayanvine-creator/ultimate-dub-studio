@@ -230,6 +230,7 @@ for wav_file in wav_files:
     align_and_export_audio(original_file, raw_tts_file, final_file)
 
     print(f"[✓ DUBBED] dub_{chunk_id}.wav re-dubbed successfully!")
+    sys.stdout.flush()
     processed_count += 1
     time.sleep(0.3)
 
