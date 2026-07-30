@@ -48,26 +48,24 @@ async function loadStudioProjectData() {
     }
 
     const titleElem = document.getElementById("studio-title");
-    if (titleElem) {
-        titleElem.innerText = `Video & Audio Sync Studio — ${projectId.replace("project__", "").replace("_", " ")}`;
-    }
 
     try {
-        // 1. Load Audio Tracks
-        const resList = await fetch(`${API_BASE}/api/projects/history/list`);
-        if (resList.ok) {
-            const data = await resList.json();
-            const currentProj = data.projects.find(p => p.project_id === projectId);
-            if (currentProj) {
-                const sourceFile = currentProj.source_file;
-                const baseName = sourceFile.substring(0, sourceFile.lastIndexOf('.')) || sourceFile;
-
-                const cleanSourcePath = sourceFile.split('/').map(part => encodeURIComponent(part)).join('/');
-                const cleanDubbedPath = encodeURIComponent(`FINAL_DUBBED_${baseName}.wav`);
-
-                track1Audio.src = `${API_BASE}/media/${projectId}/${cleanSourcePath}`;
-                track2Audio.src = `${API_BASE}/media/${projectId}/${cleanDubbedPath}?t=${Date.now()}`;
+        // 1. Fetch Project Metadata
+        const resMeta = await fetch(`${API_BASE}/api/projects/${projectId}/meta`);
+        if (resMeta.ok) {
+            const meta = await resMeta.json();
+            if (titleElem) {
+                titleElem.innerText = `Video & Audio Sync Studio — ${meta.project_name || projectId}`;
             }
+
+            const sourceFile = meta.source_file;
+            const baseName = sourceFile.substring(0, sourceFile.lastIndexOf('.')) || sourceFile;
+
+            const cleanSourcePath = sourceFile.split('/').map(part => encodeURIComponent(part)).join('/');
+            const cleanDubbedPath = encodeURIComponent(`FINAL_DUBBED_${baseName}.wav`);
+
+            track1Audio.src = `${API_BASE}/media/${projectId}/${cleanSourcePath}`;
+            track2Audio.src = `${API_BASE}/media/${projectId}/${cleanDubbedPath}?t=${Date.now()}`;
         }
 
         // 2. Auto-Scan & Auto-Load Video Media from resources/ directory

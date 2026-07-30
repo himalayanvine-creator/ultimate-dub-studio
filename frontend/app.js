@@ -2,6 +2,8 @@ const API_BASE = "http://127.0.0.1:8000";
 
 const AppState = {
     activeProjectId: "",
+    projectName: "",
+    targetLanguage: "Hindi",
     currentBaseName: "",
     sourceFileName: "",
     activeChunkId: "",
@@ -174,10 +176,13 @@ function startNewProjectUI() {
 
 function resetFullStudioUI() {
     AppState.activeProjectId = "";
+    AppState.projectName = "";
+    AppState.targetLanguage = "Hindi";
     AppState.currentBaseName = "";
     AppState.sourceFileName = "";
     AppState.activeChunkId = "";
     AppState.chunksMap = {};
+    localStorage.removeItem("active_project_id");
 
     document.getElementById("upload-form").reset();
     document.getElementById("project-name").value = "";
@@ -204,12 +209,35 @@ async function saveActiveProject() {
         alert("No active project loaded to save.");
         return;
     }
+    const currentName = document.getElementById("project-name").value.trim();
+    const currentLang = document.getElementById("target-language").value;
+
+    const payload = {
+        project_name: currentName || AppState.projectName,
+        target_language: currentLang || AppState.targetLanguage,
+        source_file: AppState.sourceFileName
+    };
+
     try {
-        const res = await fetch(`${API_BASE}/api/projects/${AppState.activeProjectId}/save`, { method: "POST" });
+        const res = await fetch(`${API_BASE}/api/projects/${AppState.activeProjectId}/save`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
         if (!res.ok) throw new Error("Failed to save project state");
-        appendLog(`💾 Project '${AppState.activeProjectId}' state saved.`);
+        const data = await res.json();
+
+        if (data.project) {
+            AppState.projectName = data.project.project_name;
+            AppState.targetLanguage = data.project.target_language;
+            document.getElementById("project-name").value = data.project.project_name;
+            document.getElementById("target-language").value = data.project.target_language;
+        }
+
+        localStorage.setItem("active_project_id", AppState.activeProjectId);
+        appendLog(`💾 Saved project '${AppState.projectName}' (${AppState.targetLanguage}).`);
         fetchProjectHistory();
-        alert(`Project state for '${AppState.activeProjectId}' has been saved!`);
+        alert(`Project '${AppState.projectName}' state has been saved!`);
     } catch (err) {
         appendLog(`❌ Save error: ${err.message}`, true);
         alert(`Save error: ${err.message}`);
@@ -238,8 +266,11 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
         const data = await res.json();
         
         AppState.activeProjectId = data.project_id;
+        AppState.projectName = data.project_name;
+        AppState.targetLanguage = data.target_language;
         AppState.sourceFileName = data.source_file;
         AppState.currentBaseName = data.source_file.substring(0, data.source_file.lastIndexOf('.')) || data.source_file;
+        localStorage.setItem("active_project_id", data.project_id);
 
         appendLog(`✓ Workspace Connected ID: '${AppState.activeProjectId}'`);
         executePipelineStream();
@@ -319,6 +350,13 @@ async function stopProcess() {
 }
 
 async function autoLoadLatestProject() {
+    const savedActiveId = localStorage.getItem("active_project_id");
+    if (savedActiveId) {
+        AppState.activeProjectId = savedActiveId;
+        await loadProjectData();
+        return;
+    }
+
     try {
         const res = await fetch(`${API_BASE}/api/projects/history/list`);
         if (!res.ok) return;
@@ -327,14 +365,7 @@ async function autoLoadLatestProject() {
         if (data.projects && data.projects.length > 0) {
             const latest = data.projects[0];
             AppState.activeProjectId = latest.project_id;
-            AppState.sourceFileName = latest.source_file;
-            AppState.currentBaseName = latest.source_file.substring(0, latest.source_file.lastIndexOf('.')) || latest.source_file;
-
-            document.getElementById("project-name").value = latest.project_name;
-            document.getElementById("target-language").value = latest.target_language || "Hindi";
-
-            appendLog(`Session restored for project '${latest.project_name}'. Data loaded.`);
-            updateStepProgress("completed_all");
+            localStorage.setItem("active_project_id", latest.project_id);
             await loadProjectData();
         }
     } catch (err) {
@@ -344,6 +375,25 @@ async function autoLoadLatestProject() {
 
 async function loadProjectData() {
     if (!AppState.activeProjectId) return;
+
+    try {
+        const metaRes = await fetch(`${API_BASE}/api/projects/${AppState.activeProjectId}/meta`);
+        if (metaRes.ok) {
+            const meta = await metaRes.json();
+            AppState.projectName = meta.project_name || meta.project_id;
+            AppState.targetLanguage = meta.target_language || "Hindi";
+            AppState.sourceFileName = meta.source_file || AppState.sourceFileName;
+
+            document.getElementById("project-name").value = AppState.projectName;
+            document.getElementById("target-language").value = AppState.targetLanguage;
+
+            appendLog(`📂 Project '${AppState.projectName}' loaded successfully.`);
+        }
+    } catch (err) {
+        console.log("Failed to load project metadata:", err);
+    }
+
+    AppState.currentBaseName = AppState.sourceFileName ? (AppState.sourceFileName.substring(0, AppState.sourceFileName.lastIndexOf('.')) || AppState.sourceFileName) : "";
 
     const origUrl = getMediaUrl(`${AppState.activeProjectId}/${AppState.sourceFileName}`);
     const dubUrl = getMediaUrl(`${AppState.activeProjectId}/FINAL_DUBBED_${AppState.currentBaseName}.wav`) + `?t=${Date.now()}`;
@@ -641,8 +691,7 @@ async function fetchProjectHistory() {
         let html = "";
         data.projects.forEach(p => {
             const safeProjId = encodeURIComponent(p.project_id);
-            const safeSourceFile = encodeURIComponent(p.source_file);
-            const safeProjName = (p.project_name || "").replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const safeProjName = (p.project_name || p.project_id).replace(/'/g, "\\'").replace(/"/g, '&quot;');
             html += `
             <div class="project-card">
                 <div>
@@ -652,7 +701,7 @@ async function fetchProjectHistory() {
                     </div>
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <button type="button" class="btn btn-blue" style="padding:5px 10px; font-size:12px;" onclick="loadProjectFromHistory('${safeProjId}', '${safeSourceFile}')">Load</button>
+                    <button type="button" class="btn btn-blue" style="padding:5px 10px; font-size:12px;" onclick="loadProjectFromHistory('${safeProjId}')">Load</button>
                     <button type="button" class="btn btn-red" style="padding:5px 10px; font-size:12px;" onclick="wipeOffProject('${safeProjId}', '${safeProjName}')">Wipe Off</button>
                 </div>
             </div>`;
@@ -681,6 +730,7 @@ async function wipeOffProject(encodedProjectId, projectName) {
 
         if (AppState.activeProjectId === projectId) {
             AppState.activeProjectId = null;
+            AppState.projectName = null;
             AppState.sourceFileName = null;
             AppState.chunksFolderName = null;
             AppState.dubbedFolderName = null;
@@ -700,15 +750,12 @@ async function wipeOffProject(encodedProjectId, projectName) {
     }
 }
 
-function loadProjectFromHistory(encodedId, encodedFile) {
+async function loadProjectFromHistory(encodedId) {
     const id = decodeURIComponent(encodedId);
-    const file = decodeURIComponent(encodedFile);
     AppState.activeProjectId = id;
-    AppState.sourceFileName = file;
-    AppState.currentBaseName = file.substring(0, file.lastIndexOf('.')) || file;
+    localStorage.setItem("active_project_id", id);
     
-    appendLog(`📂 Session loaded for project '${id}'.`);
-    loadProjectData();
+    await loadProjectData();
     closeHistoryPanel();
 }
 

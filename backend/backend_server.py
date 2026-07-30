@@ -2,9 +2,10 @@ import os
 import sys
 import shutil
 import asyncio
-import sqlite3
+import json
+import time
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Body
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,7 @@ WORKSPACE_DIR = "/Volumes/new/LocalDubWorkspace"
 PROJECTS_DIR = os.path.join(WORKSPACE_DIR, "projects")
 FRONTEND_DIR = os.path.join(WORKSPACE_DIR, "frontend")
 SCRIPTS_DIR = os.path.join(WORKSPACE_DIR, "backend", "scripts")
+DB_PATH = os.path.join(WORKSPACE_DIR, "localdub_history.db")
 
 PYTHON_EXE = os.path.join(WORKSPACE_DIR, ".venv", "bin", "python")
 if not os.path.exists(PYTHON_EXE):
@@ -34,6 +36,147 @@ RUNNING_PROCESSES: dict = {}
 
 # Ensure base directories exist
 os.makedirs(PROJECTS_DIR, exist_ok=True)
+
+def init_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                project_id TEXT PRIMARY KEY,
+                project_name TEXT NOT NULL,
+                source_file TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'created',
+                project_path TEXT NOT NULL,
+                updated_at TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[DB Init Error] {e}")
+
+init_db()
+
+def get_project_meta(project_id: str) -> dict:
+    proj_path = os.path.join(PROJECTS_DIR, project_id)
+    meta_path = os.path.join(proj_path, "project_meta.json")
+    
+    # 1. Check if project_meta.json exists
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data
+        except Exception as e:
+            print(f"[Meta Read Error] {e}")
+
+    # 2. Check DB
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT project_id, project_name, source_file, target_language, created_at, status, updated_at FROM projects WHERE project_id = ?", (project_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            data = {
+                "project_id": row[0],
+                "project_name": row[1],
+                "source_file": row[2],
+                "target_language": row[3],
+                "created_at": str(row[4]) if row[4] else "Active Session",
+                "status": row[5] or "READY",
+                "updated_at": str(row[6]) if row[6] else None
+            }
+            if os.path.exists(proj_path):
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return data
+    except Exception as db_e:
+        print(f"[DB Query Error] {db_e}")
+
+    # 3. Fallback: derive from folder name and filesystem
+    display_name = project_id.replace("project__", "").replace("_", " ")
+    source_file = "input_media.wav"
+    if os.path.exists(proj_path):
+        files = os.listdir(proj_path)
+        media_exts = (".wav", ".mp3", ".m4a", ".mp4", ".mkv", ".mov", ".webm", ".m4v")
+        for f in files:
+            if f.lower().endswith(media_exts) and not f.startswith("FINAL_DUBBED_") and not f.startswith("EXPORTED_"):
+                source_file = f; break
+
+    default_meta = {
+        "project_id": project_id,
+        "project_name": display_name,
+        "source_file": source_file,
+        "target_language": "Hindi",
+        "created_at": "Active Session",
+        "status": "READY",
+        "updated_at": None
+    }
+    if os.path.exists(proj_path):
+        try:
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(default_meta, f, indent=2)
+        except Exception:
+            pass
+    return default_meta
+
+def save_project_meta(project_id: str, project_name: str = None, target_language: str = None, source_file: str = None, status: str = "READY") -> dict:
+    proj_path = os.path.join(PROJECTS_DIR, project_id)
+    os.makedirs(proj_path, exist_ok=True)
+    
+    current_meta = get_project_meta(project_id)
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    if project_name:
+        current_meta["project_name"] = project_name
+    if target_language:
+        current_meta["target_language"] = target_language
+    if source_file:
+        current_meta["source_file"] = source_file
+    if status:
+        current_meta["status"] = status
+
+    current_meta["updated_at"] = now_str
+    if "created_at" not in current_meta or current_meta["created_at"] == "Active Session":
+        current_meta["created_at"] = now_str
+
+    meta_path = os.path.join(proj_path, "project_meta.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(current_meta, f, indent=2)
+
+    # Upsert SQLite database
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO projects (project_id, project_name, source_file, target_language, created_at, status, project_path, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                project_name = excluded.project_name,
+                source_file = excluded.source_file,
+                target_language = excluded.target_language,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+        """, (
+            project_id,
+            current_meta["project_name"],
+            current_meta["source_file"],
+            current_meta["target_language"],
+            current_meta["created_at"],
+            current_meta["status"],
+            proj_path,
+            now_str
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as db_e:
+        print(f"[DB Upsert Error] {db_e}")
+
+    return current_meta
 
 # Mount static media and frontend web studio files
 app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
@@ -120,12 +263,21 @@ async def create_project(
         if file_ext in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}:
             shutil.copy(target_file_path, os.path.join(resources_dir, saved_file_name))
 
+    # Save project metadata
+    meta = save_project_meta(
+        project_id=project_id,
+        project_name=project_name,
+        target_language=target_language,
+        source_file=saved_file_name,
+        status="created"
+    )
+
     return {
         "status": "success",
         "project_id": project_id,
-        "project_name": project_name,
-        "target_language": target_language,
-        "source_file": saved_file_name
+        "project_name": meta["project_name"],
+        "target_language": meta["target_language"],
+        "source_file": meta["source_file"]
     }
 
 
@@ -223,30 +375,22 @@ async def get_project_resources_media(project_id: str):
 async def list_projects_history():
     projects = []
     if os.path.exists(PROJECTS_DIR):
-        for entry in os.listdir(PROJECTS_DIR):
+        entries = sorted(os.listdir(PROJECTS_DIR), reverse=True)
+        for entry in entries:
             proj_path = os.path.join(PROJECTS_DIR, entry)
             if os.path.isdir(proj_path) and entry.startswith("project__"):
-                display_name = entry.replace("project__", "").replace("_", " ")
-                
-                # Scan specifically for media files
-                files = os.listdir(proj_path)
-                source_file = "input_media.wav"
-                media_exts = (".wav", ".mp3", ".m4a", ".mp4", ".mkv", ".mov", ".webm", ".m4v")
-                for f in files:
-                    if f.lower().endswith(media_exts) and not f.startswith("FINAL_DUBBED_") and not f.startswith("EXPORTED_"):
-                        source_file = f
-                        break
-
-                projects.append({
-                    "project_id": entry,
-                    "project_name": display_name,
-                    "status": "READY",
-                    "source_file": source_file,
-                    "target_language": "Hindi",
-                    "created_at": "Active Session"
-                })
+                meta = get_project_meta(entry)
+                projects.append(meta)
 
     return {"projects": projects}
+
+
+@app.get("/api/projects/{project_id}/meta")
+async def get_project_metadata(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return get_project_meta(project_id)
 
 
 @app.get("/api/projects/{project_id}/chunks")
@@ -352,8 +496,28 @@ async def save_text_file(data: dict):
 
 
 @app.post("/api/projects/{project_id}/save")
-async def save_project_state(project_id: str):
-    return {"status": "success", "message": f"Project '{project_id}' state saved successfully."}
+async def save_project_state(project_id: str, data: Optional[dict] = Body(None)):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    p_name = data.get("project_name") if data else None
+    t_lang = data.get("target_language") if data else None
+    s_file = data.get("source_file") if data else None
+
+    meta = save_project_meta(
+        project_id=project_id,
+        project_name=p_name,
+        target_language=t_lang,
+        source_file=s_file,
+        status="READY"
+    )
+
+    return {
+        "status": "success",
+        "message": f"Project '{meta['project_name']}' state saved successfully.",
+        "project": meta
+    }
 
 
 @app.delete("/api/projects/{project_id}")
