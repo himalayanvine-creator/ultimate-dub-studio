@@ -395,9 +395,7 @@ async def run_pipeline_stream(project_id: str):
         pipeline_scripts = [
             "slice.py",
             "text_grabber.py",
-            "translator.py",
-            "dubber.py",
-            "auditor.py"
+            "translator.py"
         ]
 
         for step_idx, script in enumerate(pipeline_scripts, 1):

@@ -136,9 +136,7 @@ function updateStepProgress(activeStepKey) {
     const steps = [
         { id: "step-slice", key: "slice" },
         { id: "step-transcribe", key: "transcribe" },
-        { id: "step-translate", key: "translate" },
-        { id: "step-dub", key: "dub" },
-        { id: "step-audit", key: "audit" }
+        { id: "step-translate", key: "translate" }
     ];
 
     let foundActive = false;
@@ -266,8 +264,6 @@ function executePipelineStream() {
         if (msg.includes("slice.py")) updateStepProgress("slice");
         else if (msg.includes("text_grabber.py")) updateStepProgress("transcribe");
         else if (msg.includes("translator.py")) updateStepProgress("translate");
-        else if (msg.includes("dubber.py")) updateStepProgress("dub");
-        else if (msg.includes("auditor.py")) updateStepProgress("audit");
 
         appendLog(msg);
 
@@ -279,6 +275,7 @@ function executePipelineStream() {
             document.getElementById("btn-submit").innerText = "Start Process";
             await loadProjectData();
             fetchProjectHistory();
+            appendLog("✅ Translation Pipeline completed! You can now review/edit texts in Section 3, then click 'Start Dubbing Pipeline' below.");
         }
     };
 
