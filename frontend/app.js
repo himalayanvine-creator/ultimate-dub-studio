@@ -581,6 +581,45 @@ async function proceedToFinalStitch() {
     };
 }
 
+function runDubbingPipeline() {
+    if (!AppState.activeProjectId) {
+        alert("Please load or create a project first.");
+        return;
+    }
+    
+    appendLog(`🎙️ Launching Dubbing & Master Assembly Pipeline (Dubber ➔ Stitcher ➔ Auditor)...`);
+    updateStepStatus("dub", "running");
+
+    const eventSource = new EventSource(`${API_BASE}/api/projects/${encodeURIComponent(AppState.activeProjectId)}/run-dubbing-pipeline`);
+
+    eventSource.onmessage = function(e) {
+        appendLog(e.data);
+
+        if (e.data.includes("dubber.py")) updateStepStatus("dub", "running");
+        if (e.data.includes("stitcher.py")) {
+            updateStepStatus("dub", "completed");
+        }
+        if (e.data.includes("auditor.py")) updateStepStatus("audit", "running");
+
+        if (e.data.includes("[COMPLETE]")) {
+            updateStepStatus("audit", "completed");
+            eventSource.close();
+            loadProjectData();
+            appendLog("✅ Dubbing & Assembly Pipeline finished successfully!");
+        }
+
+        if (e.data.includes("[!] PIPELINE HALTED")) {
+            eventSource.close();
+            appendLog("❌ Dubbing pipeline halted due to error.", true);
+        }
+    };
+
+    eventSource.onerror = function() {
+        eventSource.close();
+        appendLog("⚠️ Connection to dubbing stream closed.", true);
+    };
+}
+
 function openStudioPage() {
     if (AppState.activeProjectId) {
         window.location.href = `studio.html?project_id=${AppState.activeProjectId}`;

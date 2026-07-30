@@ -56,7 +56,8 @@ async def run_script_generator(script_name: str, project_dir: str, project_id: s
         cwd=project_dir,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env=env
+        env=env,
+        limit=1024 * 1024 * 10  # 10MB buffer limit for long stdout lines
     )
 
     RUNNING_PROCESSES[project_id] = process
@@ -64,7 +65,15 @@ async def run_script_generator(script_name: str, project_dir: str, project_id: s
     return_code = -1
     try:
         while True:
-            line = await process.stdout.readline()
+            try:
+                line = await process.stdout.readline()
+            except asyncio.LimitOverrunError as overrun_err:
+                chunk = await process.stdout.read(overrun_err.consumed or 65536)
+                text = chunk.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    yield f"data: {text}\n\n"
+                continue
+
             if not line:
                 break
             text = line.decode("utf-8", errors="replace").rstrip()
@@ -404,6 +413,32 @@ async def run_pipeline_stream(project_id: str):
                 return
 
         yield "data: [COMPLETE] Pipeline execution finished successfully!\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/projects/{project_id}/run-dubbing-pipeline")
+async def run_dubbing_pipeline_stream(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    async def event_generator():
+        yield f"data: [START] Launching Dubbing & Master Assembly Pipeline (dubber ➔ stitcher ➔ auditor) for '{project_id}'...\n\n"
+        pipeline_scripts = ["dubber.py", "stitcher.py", "auditor.py"]
+
+        for step_idx, script in enumerate(pipeline_scripts, 1):
+            yield f"data: --- Stage [{step_idx}/{len(pipeline_scripts)}]: {script} ---\n\n"
+            step_failed = False
+            async for log_event in run_script_generator(script, project_path, project_id):
+                yield log_event
+                if "[!] EXECUTOR ERROR:" in log_event or "[!] ERROR:" in log_event:
+                    step_failed = True
+            if step_failed:
+                yield f"data: [!] PIPELINE HALTED: Failed at stage '{script}'.\n\n"
+                return
+
+        yield "data: [COMPLETE] Dubbing & Assembly Pipeline finished successfully!\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
