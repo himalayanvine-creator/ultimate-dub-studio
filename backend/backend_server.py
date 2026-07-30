@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 import asyncio
+import sqlite3
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -349,8 +350,27 @@ async def save_project_state(project_id: str):
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str):
     project_path = os.path.join(PROJECTS_DIR, project_id)
+    print(f"[Wipe Off] Attempting to delete project folder: {project_path}")
+    
     if os.path.exists(project_path):
-        shutil.rmtree(project_path, ignore_errors=True)
+        try:
+            shutil.rmtree(project_path)
+            print(f"[Wipe Off] Successfully deleted project folder: {project_path}")
+        except Exception as e:
+            print(f"[Wipe Off] Non-fatal error deleting folder: {e}")
+            shutil.rmtree(project_path, ignore_errors=True)
+            
+    try:
+        db_path = os.path.join(WORKSPACE_DIR, "localdub_history.db")
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM projects WHERE project_id = ?", (project_id,))
+            conn.commit()
+            conn.close()
+    except Exception as db_e:
+        print(f"[Wipe Off] DB deletion note: {db_e}")
+
     return {"status": "success", "message": f"Project '{project_id}' deleted completely."}
 
 

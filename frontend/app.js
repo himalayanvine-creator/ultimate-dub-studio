@@ -630,14 +630,17 @@ async function fetchProjectHistory() {
 
 async function wipeOffProject(encodedProjectId, projectName) {
     const projectId = decodeURIComponent(encodedProjectId);
-    if (!confirm(`Are you sure you want to completely wipe off project '${projectName}'? This permanently deletes all SSD files and records.`)) {
+    if (!confirm(`⚠️ ARE YOU SURE?\n\nDo you want to permanently wipe off project '${projectName}'?\n\nThis will completely delete the whole project folder, all audio chunks, transcriptions, translations, and dubbed files from disk.`)) {
         return;
     }
 
     try {
-        appendLog(`Wiping off project '${projectId}' from SSD...`);
+        appendLog(`🗑️ Wiping off project '${projectId}' from SSD...`);
         const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
-        if (!res.ok) throw new Error("Failed to wipe off project");
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || "Failed to wipe off project from server");
+        }
 
         if (AppState.activeProjectId === projectId) {
             AppState.activeProjectId = null;
@@ -649,7 +652,8 @@ async function wipeOffProject(encodedProjectId, projectName) {
             localStorage.removeItem("active_project_id");
         }
 
-        appendLog(`✓ Project '${projectId}' wiped off successfully!`);
+        appendLog(`✓ Project '${projectId}' wiped off completely!`);
+        alert(`✓ Project '${projectName}' wiped off successfully!`);
         await fetchProjectHistory();
         loadProjectData();
 
