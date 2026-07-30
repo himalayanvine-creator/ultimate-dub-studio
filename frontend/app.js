@@ -677,3 +677,41 @@ function loadProjectFromHistory(encodedId, encodedFile) {
 
 function loadHistoryPanel() { fetchProjectHistory(); document.getElementById("history-modal").style.display = "block"; }
 function closeHistoryPanel() { document.getElementById("history-modal").style.display = "none"; }
+
+// ==========================================
+// 📱 PWA Service Worker & Desktop Installation
+// ==========================================
+let deferredPwaPrompt = null;
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js')
+            .then(reg => console.log('[PWA] ServiceWorker registered with scope:', reg.scope))
+            .catch(err => console.log('[PWA] ServiceWorker registration failed:', err));
+    });
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPwaPrompt = e;
+    const installBtn = document.getElementById('pwa-install-btn');
+    if (installBtn) {
+        installBtn.style.display = 'inline-block';
+    }
+});
+
+function triggerPwaInstall() {
+    if (!deferredPwaPrompt) {
+        alert("PWA installation is ready! In Chrome/Edge, click the install icon in the address bar (or Menu -> 'Install ULTIMATE DUB STUDIO'). In Safari, click Share -> 'Add to Dock'.");
+        return;
+    }
+    deferredPwaPrompt.prompt();
+    deferredPwaPrompt.userChoice.then((choiceResult) => {
+        if (choiceResult.outcome === 'accepted') {
+            console.log('[PWA] User accepted the install prompt');
+            const installBtn = document.getElementById('pwa-install-btn');
+            if (installBtn) installBtn.style.display = 'none';
+        }
+        deferredPwaPrompt = null;
+    });
+}

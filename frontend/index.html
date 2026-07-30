@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ULTIMATE DUB STUDIO</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#11111b">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Dub Studio">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
     <script src="https://unpkg.com/wavesurfer.js@7"></script>
 </head>
 <body>
@@ -12,6 +18,7 @@
     <header class="app-header">
         <h1>ULTIMATE DUB STUDIO</h1>
         <div class="header-actions">
+            <button type="button" id="pwa-install-btn" class="btn btn-outline" style="display:none;" onclick="triggerPwaInstall()">📲 Install App</button>
             <button type="button" class="btn btn-green" onclick="startNewProjectUI()">New Project</button>
             <button type="button" class="btn btn-blue" onclick="saveActiveProject()">Save Project</button>
             <button type="button" class="btn btn-outline" onclick="loadHistoryPanel()">View Projects</button>
