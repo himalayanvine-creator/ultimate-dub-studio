@@ -397,7 +397,6 @@ async def run_pipeline_stream(project_id: str):
             "text_grabber.py",
             "translator.py",
             "dubber.py",
-            "stitcher.py",
             "auditor.py"
         ]
 
@@ -424,8 +423,8 @@ async def run_dubbing_pipeline_stream(project_id: str):
         raise HTTPException(status_code=404, detail="Project directory not found")
 
     async def event_generator():
-        yield f"data: [START] Launching Dubbing & Master Assembly Pipeline (dubber ➔ stitcher ➔ auditor) for '{project_id}'...\n\n"
-        pipeline_scripts = ["dubber.py", "stitcher.py", "auditor.py"]
+        yield f"data: [START] Launching Dubbing & Quality Audit Pipeline (dubber.py ➔ auditor.py) for '{project_id}'...\n\n"
+        pipeline_scripts = ["dubber.py", "auditor.py"]
 
         for step_idx, script in enumerate(pipeline_scripts, 1):
             yield f"data: --- Stage [{step_idx}/{len(pipeline_scripts)}]: {script} ---\n\n"
@@ -438,7 +437,7 @@ async def run_dubbing_pipeline_stream(project_id: str):
                 yield f"data: [!] PIPELINE HALTED: Failed at stage '{script}'.\n\n"
                 return
 
-        yield "data: [COMPLETE] Dubbing & Assembly Pipeline finished successfully!\n\n"
+        yield "data: [COMPLETE] Dubbing & Quality Audit Pipeline finished successfully!\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

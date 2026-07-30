@@ -587,7 +587,7 @@ function runDubbingPipeline() {
         return;
     }
     
-    appendLog(`🎙️ Launching Dubbing & Master Assembly Pipeline (Dubber ➔ Stitcher ➔ Auditor)...`);
+    appendLog(`🎙️ Launching Dubbing & Quality Audit Pipeline (Dubber ➔ Auditor)...`);
     updateStepStatus("dub", "running");
 
     const eventSource = new EventSource(`${API_BASE}/api/projects/${encodeURIComponent(AppState.activeProjectId)}/run-dubbing-pipeline`);
@@ -596,16 +596,16 @@ function runDubbingPipeline() {
         appendLog(e.data);
 
         if (e.data.includes("dubber.py")) updateStepStatus("dub", "running");
-        if (e.data.includes("stitcher.py")) {
+        if (e.data.includes("auditor.py")) {
             updateStepStatus("dub", "completed");
+            updateStepStatus("audit", "running");
         }
-        if (e.data.includes("auditor.py")) updateStepStatus("audit", "running");
 
         if (e.data.includes("[COMPLETE]")) {
             updateStepStatus("audit", "completed");
             eventSource.close();
             loadProjectData();
-            appendLog("✅ Dubbing & Assembly Pipeline finished successfully!");
+            appendLog("✅ Dubbing & Quality Audit Pipeline finished successfully!");
         }
 
         if (e.data.includes("[!] PIPELINE HALTED")) {
