@@ -33,3 +33,4 @@ node_modules/
 # Local configuration / secrets
 .env
 .env.*
+github-recovery-codes.txt

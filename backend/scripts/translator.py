@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import json
 from google import genai
 from google.genai import types
 
@@ -29,6 +30,15 @@ nepali_files = sorted([f for f in os.listdir(source_folder) if f.endswith(".txt"
 print(f"[Translator Pipeline] Source: '{source_folder}/'")
 print(f"[Translator Pipeline] Target: '{target_folder}/'\n")
 
+# Load timeline.json to get chunk durations
+chunks_folders = [f for f in os.listdir(".") if os.path.isdir(f) and f.endswith("_chunks")]
+timeline_map = {}
+if chunks_folders:
+    t_file = os.path.join(chunks_folders[0], "timeline.json")
+    if os.path.exists(t_file):
+        with open(t_file, "r", encoding="utf-8") as tf:
+            timeline_map = json.load(tf)
+
 completed_count = 0
 updated_count = 0
 skipped_count = 0
@@ -55,11 +65,12 @@ for file_name in nepali_files:
             tf.write("")
         continue
 
-    print(f"--- Translating {chunk_id} ---")
+    chunk_dur = timeline_map.get(chunk_id, {}).get("duration_sec", 4.0)
+
+    print(f"--- Translating {chunk_id} ({chunk_dur:.1f}s speech window) ---")
     print(f"  Nepali: \"{nepali_text}\"")
 
     try:
-        chunks_folders = [f for f in os.listdir(".") if os.path.isdir(f) and f.endswith("_chunks")]
         audio_part = None
         if chunks_folders:
             audio_file = os.path.join(chunks_folders[0], f"{chunk_id}.wav")
@@ -69,17 +80,33 @@ for file_name in nepali_files:
                 audio_part = types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
 
         prompt = (
-            f"Translate this Nepali speech chunk into natural professional Hindi text: '{nepali_text}'. "
-            "Ignore conversational filler words like 'hai', 'haina'. Localize technical terms cleanly. "
+            f"Translate this Nepali speech chunk into professional, natural Hindi text for video dubbing: '{nepali_text}'. "
+            f"Target speech duration is approximately {chunk_dur:.1f} seconds. "
+            "CRITICAL TIMING & LENGTH RULE: The translated Hindi text MUST match the exact length and duration of the original speech. "
+            "Keep it concise, direct, and rhythmic. Do NOT add filler words, extra explanations, or long descriptive phrases. "
             "Return ONLY the plain Hindi text string."
         )
 
         contents = [prompt, audio_part] if audio_part else prompt
 
-        response = vertex_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents
-        )
+        response = None
+        for attempt in range(4):
+            try:
+                response = vertex_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=contents
+                )
+                break
+            except Exception as api_err:
+                if "429" in str(api_err) or "RESOURCE_EXHAUSTED" in str(api_err):
+                    wait_sec = (attempt + 1) * 2.5
+                    print(f"  [⏳ 429 Rate Limit] Retrying in {wait_sec}s (Attempt {attempt+1}/4)...")
+                    time.sleep(wait_sec)
+                else:
+                    raise api_err
+
+        if not response:
+            raise Exception("Vertex AI request failed after retries")
 
         hindi_text = response.text.strip().replace('"', '')
         print(f"  Hindi:  \"{hindi_text}\"")

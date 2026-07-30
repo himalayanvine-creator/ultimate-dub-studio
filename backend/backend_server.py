@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import asyncio
 from typing import Optional
@@ -21,6 +22,14 @@ app.add_middleware(
 WORKSPACE_DIR = "/Volumes/new/LocalDubWorkspace"
 PROJECTS_DIR = os.path.join(WORKSPACE_DIR, "projects")
 FRONTEND_DIR = os.path.join(WORKSPACE_DIR, "frontend")
+SCRIPTS_DIR = os.path.join(WORKSPACE_DIR, "backend", "scripts")
+
+PYTHON_EXE = os.path.join(WORKSPACE_DIR, ".venv", "bin", "python")
+if not os.path.exists(PYTHON_EXE):
+    PYTHON_EXE = sys.executable
+
+# Track running processes per project_id to support clean cancellation
+RUNNING_PROCESSES: dict = {}
 
 # Ensure base directories exist
 os.makedirs(PROJECTS_DIR, exist_ok=True)
@@ -28,6 +37,50 @@ os.makedirs(PROJECTS_DIR, exist_ok=True)
 # Mount static media and frontend web studio files
 app.mount("/media", StaticFiles(directory=PROJECTS_DIR), name="media")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+
+
+async def run_script_generator(script_name: str, project_dir: str, project_id: str):
+    script_path = os.path.join(SCRIPTS_DIR, script_name)
+    if not os.path.exists(script_path):
+        yield f"data: [!] ERROR: Script '{script_name}' not found at {script_path}\n\n"
+        return
+
+    yield f"data: [EXECUTOR] Launching '{script_name}'...\n\n"
+    
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+
+    process = await asyncio.create_subprocess_exec(
+        PYTHON_EXE, script_path,
+        cwd=project_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env
+    )
+
+    RUNNING_PROCESSES[project_id] = process
+
+    return_code = -1
+    try:
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", errors="replace").rstrip()
+            if text:
+                yield f"data: {text}\n\n"
+
+        await process.wait()
+        return_code = process.returncode
+    except Exception as e:
+        yield f"data: [!] EXECUTOR EXCEPTION in {script_name}: {str(e)}\n\n"
+    finally:
+        RUNNING_PROCESSES.pop(project_id, None)
+
+    if return_code == 0:
+        yield f"data: [✓ EXECUTOR] SUCCESS: '{script_name}' completed!\n\n"
+    else:
+        yield f"data: [!] EXECUTOR ERROR: '{script_name}' exited with code {return_code}\n\n"
 
 
 @app.post("/api/projects/create")
@@ -165,11 +218,12 @@ async def list_projects_history():
             if os.path.isdir(proj_path) and entry.startswith("project__"):
                 display_name = entry.replace("project__", "").replace("_", " ")
                 
-                # Scan for source file
+                # Scan specifically for media files
                 files = os.listdir(proj_path)
-                source_file = "source.wav"
+                source_file = "input_media.wav"
+                media_exts = (".wav", ".mp3", ".m4a", ".mp4", ".mkv", ".mov", ".webm", ".m4v")
                 for f in files:
-                    if not f.startswith("FINAL_DUBBED_") and not os.path.isdir(os.path.join(proj_path, f)):
+                    if f.lower().endswith(media_exts) and not f.startswith("FINAL_DUBBED_") and not f.startswith("EXPORTED_"):
                         source_file = f
                         break
 
@@ -296,25 +350,39 @@ async def save_project_state(project_id: str):
 async def delete_project(project_id: str):
     project_path = os.path.join(PROJECTS_DIR, project_id)
     if os.path.exists(project_path):
-        shutil.rmtree(project_path)
+        shutil.rmtree(project_path, ignore_errors=True)
     return {"status": "success", "message": f"Project '{project_id}' deleted completely."}
 
 
 @app.get("/api/projects/{project_id}/run-pipeline-stream")
 async def run_pipeline_stream(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
     async def event_generator():
-        yield "data: [START] Initializing Execution Engine...\n\n"
-        await asyncio.sleep(0.5)
-        yield "data: [1/5] Executing Smart VAD Slicing (slice.py)...\n\n"
-        await asyncio.sleep(1.0)
-        yield "data: [2/5] Transcribing Audio via Vertex AI (text_grabber.py)...\n\n"
-        await asyncio.sleep(1.0)
-        yield "data: [3/5] Performing Neural Translation (translator.py)...\n\n"
-        await asyncio.sleep(1.0)
-        yield "data: [4/5] Synthesizing Neural Speech (dubber.py)...\n\n"
-        await asyncio.sleep(1.0)
-        yield "data: [5/5] Auditing and Aligning Audio Tracks (auditor.py)...\n\n"
-        await asyncio.sleep(0.8)
+        yield f"data: [START] Initializing Execution Engine for '{project_id}'...\n\n"
+        
+        pipeline_scripts = [
+            "slice.py",
+            "text_grabber.py",
+            "translator.py",
+            "dubber.py",
+            "stitcher.py",
+            "auditor.py"
+        ]
+
+        for step_idx, script in enumerate(pipeline_scripts, 1):
+            yield f"data: --- Stage [{step_idx}/{len(pipeline_scripts)}]: {script} ---\n\n"
+            step_failed = False
+            async for log_event in run_script_generator(script, project_path, project_id):
+                yield log_event
+                if "[!] EXECUTOR ERROR:" in log_event or "[!] ERROR:" in log_event:
+                    step_failed = True
+            if step_failed:
+                yield f"data: [!] PIPELINE HALTED: Failed at stage '{script}'.\n\n"
+                return
+
         yield "data: [COMPLETE] Pipeline execution finished successfully!\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -322,26 +390,43 @@ async def run_pipeline_stream(project_id: str):
 
 @app.get("/api/projects/{project_id}/stitch")
 async def run_stitch_stream(project_id: str):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
     async def event_generator():
-        yield "data: Reading timeline mappings and assembling audio segments...\n\n"
-        await asyncio.sleep(1.0)
-        yield "data: Overlaying dubbed chunks onto timeline...\n\n"
-        await asyncio.sleep(1.0)
-        yield "data: [✓ EXECUTOR] SUCCESS: auditor.py completed!\n\n"
+        yield f"data: Assembling audio tracks for '{project_id}'...\n\n"
+        for script in ["stitcher.py", "auditor.py"]:
+            async for log_event in run_script_generator(script, project_path, project_id):
+                yield log_event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/api/projects/{project_id}/run-step")
 async def run_single_step(project_id: str, script_name: str = Query(...)):
+    project_path = os.path.join(PROJECTS_DIR, project_id)
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
     async def event_generator():
-        yield f"data: Launching re-run execution for script '{script_name}'...\n\n"
-        await asyncio.sleep(1.2)
-        yield "data: [✓ EXECUTOR] Execution complete!\n\n"
+        async for log_event in run_script_generator(script_name, project_path, project_id):
+            yield log_event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.post("/api/projects/{project_id}/stop")
 async def stop_project_execution(project_id: str):
-    return {"status": "success", "message": "Execution stopped cleanly."}
+    process = RUNNING_PROCESSES.get(project_id)
+    if process:
+        try:
+            process.terminate()
+            await asyncio.sleep(0.2)
+            if process.returncode is None:
+                process.kill()
+        except Exception:
+            pass
+        RUNNING_PROCESSES.pop(project_id, None)
+        return {"status": "success", "message": f"Execution for '{project_id}' terminated."}
+    return {"status": "success", "message": "No active process was running."}

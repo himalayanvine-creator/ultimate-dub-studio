@@ -19,14 +19,14 @@ def find_speech_boundaries(audio, silence_threshold_dbfs=-45.0, chunk_size_ms=10
     # Find start of speech
     for ms in range(0, duration_ms, chunk_size_ms):
         chunk = audio[ms:ms+chunk_size_ms]
-        if chunk.dbfs > silence_threshold_dbfs:
+        if chunk.dBFS > silence_threshold_dbfs:
             start_ms = ms
             break
             
     # Find end of speech
     for ms in range(duration_ms, 0, -chunk_size_ms):
         chunk = audio[ms-chunk_size_ms:ms]
-        if chunk.dbfs > silence_threshold_dbfs:
+        if chunk.dBFS > silence_threshold_dbfs:
             end_ms = ms
             break
             

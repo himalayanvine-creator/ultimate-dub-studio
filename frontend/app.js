@@ -13,6 +13,12 @@ const AppState = {
 
 let wsChunkOrig, wsChunkDub, wsFinalOrig, wsFinalDub;
 
+function getMediaUrl(relativePath) {
+    if (!relativePath) return "";
+    const parts = relativePath.split('/').map(p => encodeURIComponent(p));
+    return `${API_BASE}/media/${parts.join('/')}`;
+}
+
 window.addEventListener("DOMContentLoaded", () => {
     const projInput = document.getElementById("project-name");
     if (projInput) projInput.setAttribute("autocomplete", "off");
@@ -22,7 +28,10 @@ window.addEventListener("DOMContentLoaded", () => {
         waveColor: "#45475a",
         progressColor: "#a6e3a1",
         height: 60,
-        barWidth: 2
+        barWidth: 2,
+        cursorColor: "#cba6f7",
+        cursorWidth: 2,
+        dragToSeek: true
     });
 
     wsChunkDub = WaveSurfer.create({
@@ -30,7 +39,10 @@ window.addEventListener("DOMContentLoaded", () => {
         waveColor: "#45475a",
         progressColor: "#89b4fa",
         height: 60,
-        barWidth: 2
+        barWidth: 2,
+        cursorColor: "#cba6f7",
+        cursorWidth: 2,
+        dragToSeek: true
     });
 
     wsFinalOrig = WaveSurfer.create({
@@ -38,7 +50,10 @@ window.addEventListener("DOMContentLoaded", () => {
         waveColor: "#f9e2af",
         progressColor: "#fab387",
         height: 70,
-        barWidth: 2
+        barWidth: 2,
+        cursorColor: "#cba6f7",
+        cursorWidth: 2,
+        dragToSeek: true
     });
 
     wsFinalDub = WaveSurfer.create({
@@ -46,13 +61,24 @@ window.addEventListener("DOMContentLoaded", () => {
         waveColor: "#45475a",
         progressColor: "#89b4fa",
         height: 70,
-        barWidth: 2
+        barWidth: 2,
+        cursorColor: "#cba6f7",
+        cursorWidth: 2,
+        dragToSeek: true
     });
 
-    wsChunkOrig.on('audioprocess', () => updateTimeDisplay('sliced-chunk', wsChunkOrig));
-    wsChunkDub.on('audioprocess', () => updateTimeDisplay('dubbed-chunk', wsChunkDub));
-    wsFinalOrig.on('audioprocess', () => updateTimeDisplay('final-orig', wsFinalOrig));
-    wsFinalDub.on('audioprocess', () => updateTimeDisplay('final-dub', wsFinalDub));
+    function bindWaveSurferEvents(instance, elemId) {
+        instance.on('ready', () => updateTimeDisplay(elemId, instance));
+        instance.on('decode', () => updateTimeDisplay(elemId, instance));
+        instance.on('timeupdate', () => updateTimeDisplay(elemId, instance));
+        instance.on('interaction', () => updateTimeDisplay(elemId, instance));
+        instance.on('seeking', () => updateTimeDisplay(elemId, instance));
+    }
+
+    bindWaveSurferEvents(wsChunkOrig, 'sliced-chunk');
+    bindWaveSurferEvents(wsChunkDub, 'dubbed-chunk');
+    bindWaveSurferEvents(wsFinalOrig, 'final-orig');
+    bindWaveSurferEvents(wsFinalDub, 'final-dub');
 
     autoLoadLatestProject();
 });
@@ -66,9 +92,28 @@ function formatTime(sec) {
 }
 
 function updateTimeDisplay(elemId, instance) {
-    const current = formatTime(instance.getCurrentTime());
-    const total = formatTime(instance.getDuration());
-    document.getElementById(`time-${elemId}`).innerText = `${current} / ${total}`;
+    const duration = instance.getDuration();
+    const current = instance.getCurrentTime();
+    const currentFormatted = formatTime(current);
+    const totalFormatted = formatTime(duration);
+    
+    const timeElem = document.getElementById(`time-${elemId}`);
+    if (timeElem) {
+        if (!isNaN(duration) && duration > 0) {
+            timeElem.innerText = `${currentFormatted} / ${totalFormatted} (${duration.toFixed(2)}s)`;
+        } else {
+            timeElem.innerText = `${currentFormatted} / ${totalFormatted}`;
+        }
+    }
+
+    if (elemId === 'sliced-chunk' || elemId === 'dubbed-chunk') {
+        const container = document.getElementById(elemId === 'sliced-chunk' ? 'waveform-chunk-orig' : 'waveform-chunk-dub');
+        if (container && !isNaN(duration) && duration > 0) {
+            const propWidth = Math.min(100, Math.max(15, (duration / 5.0) * 100));
+            container.style.width = `${propWidth}%`;
+            container.style.transition = "width 0.3s ease";
+        }
+    }
 }
 
 function appendLog(message, isError = false) {
@@ -115,7 +160,6 @@ function updateStepProgress(activeStepKey) {
     });
 }
 
-// Top Navigation Handler: Start New Project
 function startNewProjectUI() {
     if (AppState.activeProjectId) {
         if (confirm("Start a new project? Your current active workspace UI will be cleared (saved projects remain safe in history).")) {
@@ -302,8 +346,11 @@ async function autoLoadLatestProject() {
 async function loadProjectData() {
     if (!AppState.activeProjectId) return;
 
-    wsFinalOrig.load(`${API_BASE}/media/${AppState.activeProjectId}/${AppState.sourceFileName}`);
-    wsFinalDub.load(`${API_BASE}/media/${AppState.activeProjectId}/FINAL_DUBBED_${AppState.currentBaseName}.wav?t=${Date.now()}`);
+    const origUrl = getMediaUrl(`${AppState.activeProjectId}/${AppState.sourceFileName}`);
+    const dubUrl = getMediaUrl(`${AppState.activeProjectId}/FINAL_DUBBED_${AppState.currentBaseName}.wav`) + `?t=${Date.now()}`;
+
+    wsFinalOrig.load(origUrl);
+    wsFinalDub.load(dubUrl);
 
     const res = await fetch(`${API_BASE}/api/projects/${AppState.activeProjectId}/chunks`);
     if (!res.ok) return;
@@ -463,19 +510,43 @@ async function reRunDubber() {
     };
 }
 
+async function runAuditorCheck() {
+    if (!AppState.activeProjectId) {
+        alert("Please create or load a project first.");
+        return;
+    }
+
+    appendLog("🔍 Initiating Automated Quality & Chipmunk Audit Check (auditor.py)...");
+    updateStepProgress("audit");
+
+    const eventSource = new EventSource(`${API_BASE}/api/projects/${AppState.activeProjectId}/run-step?script_name=auditor.py`);
+
+    eventSource.onmessage = (event) => {
+        appendLog(event.data);
+        if (event.data.includes("[✓ EXECUTOR]") || event.data.includes("AUDIT COMPLETE")) {
+            eventSource.close();
+            appendLog("✓ Quality Audit Check completed!");
+        }
+    };
+
+    eventSource.onerror = () => {
+        if (eventSource) eventSource.close();
+    };
+}
+
 function loadSlicedChunkAudio() {
     const chunkId = document.getElementById("sliced-chunk-select").value;
-    if (!chunkId || !AppState.chunksFolderName) return;
+    if (!chunkId || !AppState.chunksFolderName || !AppState.activeProjectId) return;
     document.getElementById("label-sliced-chunk").innerText = `${chunkId}.wav`;
-    const origUrl = `${API_BASE}/media/${AppState.activeProjectId}/${AppState.chunksFolderName}/${chunkId}.wav`;
+    const origUrl = getMediaUrl(`${AppState.activeProjectId}/${AppState.chunksFolderName}/${chunkId}.wav`);
     wsChunkOrig.load(origUrl);
 }
 
 function loadDubbedChunkAudio() {
     const chunkId = document.getElementById("dubbed-chunk-select").value;
-    if (!chunkId || !AppState.dubbedFolderName) return;
+    if (!chunkId || !AppState.dubbedFolderName || !AppState.activeProjectId) return;
     document.getElementById("label-dubbed-chunk").innerText = `dub_${chunkId}.wav`;
-    const dubUrl = `${API_BASE}/media/${AppState.activeProjectId}/${AppState.dubbedFolderName}/dub_${chunkId}.wav?t=${Date.now()}`;
+    const dubUrl = getMediaUrl(`${AppState.activeProjectId}/${AppState.dubbedFolderName}/dub_${chunkId}.wav`) + `?t=${Date.now()}`;
     wsChunkDub.load(dubUrl);
 }
 
@@ -504,7 +575,8 @@ async function proceedToFinalStitch() {
             eventSource.close();
             btn.disabled = false;
             btn.innerText = "Proceed to Stage 5 to Stitch";
-            wsFinalDub.load(`${API_BASE}/media/${AppState.activeProjectId}/FINAL_DUBBED_${AppState.currentBaseName}.wav?t=${Date.now()}`);
+            const dubUrl = getMediaUrl(`${AppState.activeProjectId}/FINAL_DUBBED_${AppState.currentBaseName}.wav`) + `?t=${Date.now()}`;
+            wsFinalDub.load(dubUrl);
         }
     };
 }
@@ -531,6 +603,9 @@ async function fetchProjectHistory() {
 
         let html = "";
         data.projects.forEach(p => {
+            const safeProjId = encodeURIComponent(p.project_id);
+            const safeSourceFile = encodeURIComponent(p.source_file);
+            const safeProjName = (p.project_name || "").replace(/'/g, "\\'").replace(/"/g, '&quot;');
             html += `
             <div class="project-card">
                 <div>
@@ -540,8 +615,8 @@ async function fetchProjectHistory() {
                     </div>
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <button type="button" class="btn btn-blue" style="padding:5px 10px; font-size:12px;" onclick="loadProjectFromHistory('${p.project_id}', '${p.source_file}')">Load</button>
-                    <button type="button" class="btn btn-red" style="padding:5px 10px; font-size:12px;" onclick="wipeOffProject('${p.project_id}', '${p.project_name}')">Wipe Off</button>
+                    <button type="button" class="btn btn-blue" style="padding:5px 10px; font-size:12px;" onclick="loadProjectFromHistory('${safeProjId}', '${safeSourceFile}')">Load</button>
+                    <button type="button" class="btn btn-red" style="padding:5px 10px; font-size:12px;" onclick="wipeOffProject('${safeProjId}', '${safeProjName}')">Wipe Off</button>
                 </div>
             </div>`;
         });
@@ -553,24 +628,40 @@ async function fetchProjectHistory() {
     }
 }
 
-async function wipeOffProject(projectId, projectName) {
-    if (!confirm(`Are you sure you want to completely wipe off project '${projectName}'? This permanently deletes all SSD files and database records.`)) {
+async function wipeOffProject(encodedProjectId, projectName) {
+    const projectId = decodeURIComponent(encodedProjectId);
+    if (!confirm(`Are you sure you want to completely wipe off project '${projectName}'? This permanently deletes all SSD files and records.`)) {
         return;
     }
 
     try {
-        appendLog(`Wiping off project '${projectId}' from SSD and Database...`);
-        const res = await fetch(`${API_BASE}/api/projects/${projectId}`, { method: "DELETE" });
+        appendLog(`Wiping off project '${projectId}' from SSD...`);
+        const res = await fetch(`${API_BASE}/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
         if (!res.ok) throw new Error("Failed to wipe off project");
 
-        window.location.reload();
+        if (AppState.activeProjectId === projectId) {
+            AppState.activeProjectId = null;
+            AppState.sourceFileName = null;
+            AppState.chunksFolderName = null;
+            AppState.dubbedFolderName = null;
+            AppState.currentBaseName = null;
+            AppState.timelineMetadata = {};
+            localStorage.removeItem("active_project_id");
+        }
+
+        appendLog(`✓ Project '${projectId}' wiped off successfully!`);
+        await fetchProjectHistory();
+        loadProjectData();
 
     } catch (err) {
         appendLog(`❌ Wipe off error: ${err.message}`, true);
+        alert(`Failed to wipe off project: ${err.message}`);
     }
 }
 
-function loadProjectFromHistory(id, file) {
+function loadProjectFromHistory(encodedId, encodedFile) {
+    const id = decodeURIComponent(encodedId);
+    const file = decodeURIComponent(encodedFile);
     AppState.activeProjectId = id;
     AppState.sourceFileName = file;
     AppState.currentBaseName = file.substring(0, file.lastIndexOf('.')) || file;
